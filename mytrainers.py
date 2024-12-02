@@ -1,3 +1,4 @@
+from functools import partial
 import math
 import time
 import numpy as np
@@ -10,13 +11,62 @@ from transformers.utils import is_sagemaker_mp_enabled, logging
 from typing import Any, Optional, Tuple, Union, Dict, List
 import torch
 from torch.utils.data import Dataset, DataLoader
+import h5py
+import os
 
 
+SAVE_DIR = "/data1/yfliu/vqhlm/datasets/wikitext103_gpt2finetuned/"  # HARD CODED
 logger = logging.get_logger(__name__)
 
 
 class ExportTrainer(Trainer):
-    save_path: str = None
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.inputs = None
+        self.h5_file = None
+        self.hidden_states_dataset = None
+        self.input_ids_dataset = None
+        self.labels_dataset = None
+        self.subset = self.args.eval_subset
+        self.save_path = os.path.join(SAVE_DIR, f'{self.subset}.h5')
+        self.batch_size = self.args.eval_batch_size
+        self.seq_length = 1024
+        self.hidden_size = 768
+        self.step = 0
+
+    def create_datasets(self, total_samples):
+        self.h5_file = h5py.File(self.save_path, 'w')
+        self.h5_file.attrs['total_samples'] = total_samples
+        self.hidden_states_dataset = self.h5_file.create_dataset(
+            'hidden_states', shape=(total_samples, self.seq_length, self.hidden_size), dtype='f4')
+        self.input_ids_dataset = self.h5_file.create_dataset(
+            'input_ids', shape=(total_samples, self.seq_length), dtype='i4')
+        self.labels_dataset = self.h5_file.create_dataset(
+            'labels', shape=(total_samples, self.seq_length), dtype='i4')
+
+    def save_to_hdf5(self, batch_idx, hidden_states, input_ids, labels):
+        index = self.step * self.batch_size  + batch_idx
+        self.hidden_states_dataset[index] = hidden_states.cpu().numpy()
+        self.input_ids_dataset[index] = input_ids.cpu().numpy()
+        self.labels_dataset[index] = labels.cpu().numpy()
+
+    def hook_fn(self, module, input, output):
+        hidden_states = output[0]  # (batch_size, seq_length, hidden_size)
+
+        batch_size = hidden_states.size(0)
+        seq_length = hidden_states.size(1)
+        hidden_size = hidden_states.size(2)
+        assert seq_length == self.seq_length, f"{seq_length=} which is not {self.seq_length=}"
+        assert hidden_size == self.hidden_size, f"{hidden_size=} which is not {self.hidden_size=}"
+        for batch_idx in range(batch_size):
+            # 获取每个 batch 对应的 input_ids 和 labels
+            input_ids = self.inputs['input_ids'][batch_idx]
+            labels = self.inputs['labels'][batch_idx]
+
+            # 保存数据到 HDF5 文件
+            self.save_to_hdf5(batch_idx, hidden_states[batch_idx], input_ids, labels)
+
+        return output
     
     def evaluate(
         self,
@@ -167,7 +217,8 @@ class ExportTrainer(Trainer):
         batch_size = self.args.eval_batch_size
 
         logger.info(f"\n***** Running {description} *****")
-        logger.info(f"  Num examples = {self.num_examples(dataloader)}")
+        num_examples = self.num_examples(dataloader)
+        logger.info(f"  Num examples = {num_examples}")
         logger.info(f"  Batch size = {batch_size}")
 
         model.eval()
@@ -194,7 +245,9 @@ class ExportTrainer(Trainer):
         observed_num_examples = 0
 
         # Main evaluation loop
+        self.create_datasets(num_examples)
         for step, inputs in enumerate(dataloader):
+            self.step = step
             # Update the observed num examples
             observed_batch_size = find_batch_size(inputs)
             if observed_batch_size is not None:
@@ -341,8 +394,11 @@ class ExportTrainer(Trainer):
         Subclass and override for custom behavior.
         """
         labels = None
+        # from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel
+        self.inputs = inputs
+        hook = model.transformer.h[5].register_forward_hook(partial(self.hook_fn))
         outputs = model(**inputs)
-
+        hook.remove()
         if labels is not None:
             raise NotImplementedError()
         else:

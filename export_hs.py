@@ -511,6 +511,7 @@ def main():
             eval_dataset = eval_dataset.select(range(data_args.max_eval_samples))
 
     # Initialize our Trainer
+    training_args.eval_subset = data_args.eval_subset
     trainer = Trainer(
         model=model,
         args=training_args,
