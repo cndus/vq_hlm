@@ -1,0 +1,4 @@
+h5_file_path: "/data1/public/vqhlm/wikitext103_gpt2finetuned/"
+batch_size: 8
+seq_length: 1024
+hidden_size: 768
