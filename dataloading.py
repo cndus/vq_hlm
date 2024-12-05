@@ -2,6 +2,7 @@ import os
 import h5py
 from torch.utils.data import Dataset, DataLoader
 import torch
+from constants import KEY_LM_HIDDEN_STATES, KEY_LM_INPUT_IDS, KEY_LM_LABELS
 from utils import load_config
 
 
@@ -16,9 +17,9 @@ class HDF5Dataset(Dataset):
         self.h5_file = h5py.File(h5_file_path, 'r')
         
         # 获取数据集
-        self.hidden_states = self.h5_file['hidden_states']
-        self.input_ids = self.h5_file['input_ids']
-        self.labels = self.h5_file['labels']
+        self.hidden_states = self.h5_file[KEY_LM_HIDDEN_STATES]
+        self.input_ids = self.h5_file[KEY_LM_INPUT_IDS]
+        self.labels = self.h5_file[KEY_LM_LABELS]
         
         # 获取总样本数
         self.total_samples = self.hidden_states.shape[0]
@@ -32,9 +33,9 @@ class HDF5Dataset(Dataset):
         hidden_states = torch.tensor(self.hidden_states[idx], dtype=torch.float)
 
         return {
-            'input_ids': input_ids,
-            'labels': labels,
-            'hidden_states': hidden_states
+            KEY_LM_INPUT_IDS: input_ids,
+            KEY_LM_LABELS: labels,
+            KEY_LM_HIDDEN_STATES: hidden_states
         }
 
     def close(self):
@@ -53,16 +54,22 @@ class ChunkedHDF5Dataset(HDF5Dataset):
         return item
 
 
-if __name__ == '__main__':
-    config = load_config(config_path='conf/example.yaml')
-    split = 'test'
+def get_chunked_h5dataloader(config_path, split, num_workers=1):
+    # Set num workers to 0 to enable debugging
+    config = load_config(config_path=config_path)
+    shuffle = split == 'train'
     dataset = ChunkedHDF5Dataset(config['h5_file_path'], split, chunk_size=config['chunk_size'])
-    dataloader = DataLoader(dataset, batch_size=config['batch_size'], shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=config['batch_size'], shuffle=shuffle, num_workers=num_workers)
+    return dataloader
+
+
+if __name__ == '__main__':
+    dataloader = get_chunked_h5dataloader('conf/example.yaml', 'test')
 
     for batch in dataloader:
-        input_ids = batch['input_ids']
-        labels = batch['labels']
-        hidden_states = batch['hidden_states']
+        input_ids = batch[KEY_LM_INPUT_IDS]
+        labels = batch[KEY_LM_LABELS]
+        hidden_states = batch[KEY_LM_HIDDEN_STATES]
         
         print(f"Input IDs: {input_ids.shape}")
         print(f"Labels: {labels.shape}")
