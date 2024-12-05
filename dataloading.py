@@ -40,10 +40,23 @@ class HDF5Dataset(Dataset):
     def close(self):
         self.h5_file.close()
 
+
+class ChunkedHDF5Dataset(HDF5Dataset):
+    def __init__(self, h5_files_dir, split, chunk_size:int):
+        super().__init__(h5_files_dir, split)
+        self.chunk_size = chunk_size
+    
+    def __getitem__(self, idx):
+        item = super().__getitem__(idx)
+        hidden_states = item['hidden_states']
+        item['hidden_states'] = hidden_states[self.chunk_size-1::self.chunk_size, :]
+        return item
+
+
 if __name__ == '__main__':
     config = load_config(config_path='conf/example.yaml')
     split = 'test'
-    dataset = HDF5Dataset(config['h5_file_path'], split)
+    dataset = ChunkedHDF5Dataset(config['h5_file_path'], split, chunk_size=config['chunk_size'])
     dataloader = DataLoader(dataset, batch_size=config['batch_size'], shuffle=True)
 
     for batch in dataloader:
