@@ -1,3 +1,4 @@
+import math
 import os
 import h5py
 from torch.utils.data import Dataset, DataLoader
@@ -16,13 +17,10 @@ class HDF5Dataset(Dataset):
         h5_file_path = os.path.join(h5_files_dir, split+'.h5')
         self.h5_file = h5py.File(h5_file_path, 'r')
         
-        # 获取数据集
         self.hidden_states = self.h5_file[KEY_LM_HIDDEN_STATES]
         self.input_ids = self.h5_file[KEY_LM_INPUT_IDS]
         self.labels = self.h5_file[KEY_LM_LABELS]
-        
-        # 获取总样本数
-        self.total_samples = self.hidden_states.shape[0]
+        self.total_samples = int(self.h5_file.attrs['total_samples'])
 
     def __len__(self):
         return self.total_samples
@@ -54,9 +52,10 @@ class ChunkedHDF5Dataset(HDF5Dataset):
         return item
 
 
-def get_chunked_h5dataloader(config_path, split, num_workers=1):
-    # Set num workers to 0 to enable debugging
+def get_chunked_h5dataloader(config_path, split):
     config = load_config(config_path=config_path)
+    batch_size = config['batch_size']
+    num_workers = math.ceil(batch_size // 32)  # Set num workers to 0 to enable debugging
     shuffle = split == 'train'
     dataset = ChunkedHDF5Dataset(config['h5_file_path'], split, chunk_size=config['chunk_size'])
     dataloader = DataLoader(dataset, batch_size=config['batch_size'], shuffle=shuffle, num_workers=num_workers)
@@ -64,7 +63,7 @@ def get_chunked_h5dataloader(config_path, split, num_workers=1):
 
 
 if __name__ == '__main__':
-    dataloader = get_chunked_h5dataloader('conf/example.yaml', 'test')
+    dataloader = get_chunked_h5dataloader('conf/data/example.yaml', 'test')
 
     for batch in dataloader:
         input_ids = batch[KEY_LM_INPUT_IDS]
