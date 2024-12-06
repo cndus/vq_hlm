@@ -13,4 +13,4 @@
 
 - [24.12.05] 新增vector-quantize-pytorch作为submodule
     - 后续开发可以继承submodule中的类，避免复制粘贴一堆代码
-    - 新增VectorQuantize的例子，后续会继续添加Validation和Test以及更多模型的支持
+    - 新增VectorQuantize的例子，同学们可以尝试替换train_vq.py中的模型，自行尝试自己的模型哈！~
