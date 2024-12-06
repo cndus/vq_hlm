@@ -2,3 +2,4 @@ torch
 yaml
 h5py
 tqdm
+tensorboard

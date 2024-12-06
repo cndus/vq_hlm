@@ -148,3 +148,5 @@ cython_debug/
 *.out
 *.err
 *.yaml
+**logs**
+*.ckpt
