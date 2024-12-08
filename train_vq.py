@@ -7,6 +7,8 @@ from dataloading import get_chunked_h5dataloader
 from vector_quantize_pytorch import VectorQuantize
 import logging
 import os
+from models import get_model
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -16,9 +18,7 @@ logging.basicConfig(
 lr = 3e-4
 train_epochs = 1
 num_codes = 1024
-hidden_size = 768
 seed = 1234
-rotation_trick = True
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -134,6 +134,7 @@ def train(model, args, train_loader, val_loader=None, train_epochs=1, alpha=10, 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_config", default='conf/data/example.yaml')
+    parser.add_argument("--model_config", default='conf/models/vectorquantize.yaml')
     parser.add_argument("--ckpt_dir", default='./checkpoints')
     parser.add_argument("--test", action='store_true')
     args = parser.parse_args()
@@ -144,16 +145,7 @@ if __name__ == '__main__':
     test_dataloader = get_chunked_h5dataloader(config_path=args.data_config, split='test')
 
     torch.manual_seed(seed)
-    model = VectorQuantize(
-        dim=hidden_size,
-        codebook_dim=32,
-        codebook_size=num_codes,
-        decay=0.8,
-        commitment_weight=1.,
-        kmeans_init=True,
-        rotation_trick=rotation_trick,
-        straight_through=False,
-    )
+    model = get_model(args.model_config)
 
     writer = SummaryWriter(log_dir=os.path.join(args.ckpt_dir, 'logs'))
     if not args.test:
