@@ -1,8 +1,19 @@
-# Current Usage
-- View the form of data with `example_usage.py`. Other files are only used to export the data we need.
+# Installation
 - install dependencies with `pip install -r requirements.txt`
 - initialize submodule with `git submodule update --init --recursive`
 - `cd vector-quantize-pytorch`, and install the submodule with `pip install -e .`
+
+# Guidelines to run a new baseline
+
+- 在`models.py`中查询或修改自己需要训练的VQ-VAE模型
+- 在`conf/models`中添加自己的模型超参
+- 以residualvq为例，可用以下命令训练模型：
+
+`python train_vq.py --ckpt_dir ./runs/residualvq --model_config conf/models/residualvq.yaml`
+- 训练完以后测试看下结果:
+
+`python train_vq.py --ckpt_dir ./runs/residualvq --model_config conf/models/residualvq.yaml --test`
+- 此外，`example_usage.ipynb`中有数据相关的可视化供大家参考
 
 # Change Log
 

@@ -4,10 +4,10 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from constants import KEY_LM_HIDDEN_STATES
 from dataloading import get_chunked_h5dataloader
-from vector_quantize_pytorch import VectorQuantize
 import logging
 import os
 from models import get_model
+from utils import load_config
 
 
 logging.basicConfig(
@@ -18,8 +18,18 @@ logging.basicConfig(
 lr = 3e-4
 train_epochs = 1
 num_codes = 1024
+num_quantizers = 1
+is_multi_codebook = False
 seed = 1234
 device = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def update_global(args):
+    global num_codes, num_quantizers, is_multi_codebook
+    data_config = load_config(args.model_config)
+    num_codes = data_config.get('codebook_size', 1024)
+    num_quantizers = data_config.get('num_quantizers', 1)
+    is_multi_codebook = num_quantizers > 1
 
 
 def save_checkpoint(model, optimizer, step, ckpt_path):
@@ -40,52 +50,67 @@ def compute_loss(model, x, alpha=10):
     out, indices, cmt_loss = model(x)
     out = out.clamp(-1., 1.)
     rec_loss = (out - x).abs().mean()
+    cmt_loss = cmt_loss.mean()
     total_loss = rec_loss + alpha * cmt_loss
     return rec_loss, cmt_loss, total_loss, indices
 
-def evaluate(model, eval_loader, split:str, writer:SummaryWriter=None, step:int=None):
+def evaluate(model, eval_loader, split: str, writer: SummaryWriter = None, step: int = None):
+    global num_quantizers
     model.to(device)
     model.eval()
     eval_loss = 0
-    index_count = {i: 0 for i in range(num_codes)}
+    index_counts = {i: {j: 0 for j in range(num_codes)} for i in range(num_quantizers)}
+
     with torch.no_grad():
         for batch in tqdm(eval_loader, desc=f"Running on {split}"):
             x = batch[KEY_LM_HIDDEN_STATES].to(device)
             rec_loss, cmt_loss, total_loss, indices = compute_loss(model, x)
             eval_loss += total_loss.item()
-            unique_indices = indices.unique().cpu().numpy()
-            for idx in unique_indices:
-                index_count[idx] += 1
+            for codebook_idx in range(num_quantizers):
+                for sub_indices in indices[..., codebook_idx]:
+                    sub_unique_indices = sub_indices.unique().cpu().numpy()
+                    for idx in sub_unique_indices:
+                        index_counts[codebook_idx][idx] += 1
 
     eval_loss /= len(eval_loader)
-    utilized_indices = sum(1 for count in index_count.values() if count > 0)
-    active_percent = utilized_indices / num_codes * 100
+    individual_utilizations = []
+    for codebook_idx in range(num_quantizers):
+        utilized_indices_in_codebook = sum(1 for count in index_counts[codebook_idx].values() if count > 0)
+        individual_utilizations.append(utilized_indices_in_codebook / num_codes * 100)
+
     logging.info(f"{split} Loss: {eval_loss:.4f}")
-    logging.info(f'{split} Active Percentage: {active_percent:.4f}')
+    for codebook_idx in range(num_quantizers):
+        logging.info(f'{split} Active Percentage (Codebook {codebook_idx+1}): {individual_utilizations[codebook_idx]:.4f}')
+
     if writer:
         writer.add_scalar(f'Loss/{split}', eval_loss, step)
-        writer.add_scalar(f'Active/{split}', active_percent, step)
-    return eval_loss, index_count
+        for codebook_idx in range(num_quantizers):
+            writer.add_scalar(f'Active_Codebook_{codebook_idx+1}/{split}', individual_utilizations[codebook_idx], step)
+    return eval_loss, index_counts
 
-def save_histogram(args, index_count):
+def save_histogram(args, index_counts):
+    global num_quantizers
     import csv
     import matplotlib.pyplot as plt
-    with open(os.path.join(args.ckpt_dir, 'index_frequencies.csv'), mode='w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(['Index', 'Frequency'])  # 写入表头
-        for idx, count in index_count.items():
-            writer.writerow([idx, count])  # 写入每个索引的频次
+    for codebook_idx, index_count in enumerate(index_counts):
+        filename = f'index_frequencies_{codebook_idx}'
+        index_count = index_counts[codebook_idx]
+        with open(os.path.join(args.ckpt_dir, f'{filename}.csv'), mode='w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(['Index', 'Frequency'])  # 写入表头
+            for idx, count in index_count.items():
+                writer.writerow([idx, count])  # 写入每个索引的频次
 
-    logging.info("Index frequencies saved to 'index_frequencies.csv'")
-    
-    frequencies = list(index_count.values())
+        logging.info(f"Index frequencies saved to '{filename}.csv'")
+        
+        frequencies = list(index_count.values())
 
-    plt.bar(range(num_codes), frequencies, edgecolor='black', alpha=0.7)
-    plt.title("Frequency of Codebook Indices (Entire Dataset)")
-    plt.xlabel("Codebook Index")
-    plt.ylabel("Frequency")
-    plt.xticks(range(0, num_codes, 50))
-    plt.savefig(os.path.join(args.ckpt_dir, 'index_frequencies.png'))
+        plt.bar(range(num_codes), frequencies, edgecolor='black', alpha=0.7)
+        plt.title("Frequency of Codebook Indices (Entire Dataset)")
+        plt.xlabel("Codebook Index")
+        plt.ylabel("Frequency")
+        plt.xticks(range(0, num_codes, 50))
+        plt.savefig(os.path.join(args.ckpt_dir, f'{filename}.png'))
 
 
 def train(model, args, train_loader, val_loader=None, train_epochs=1, alpha=10, validate_every=1000, writer=None, resume_from_step=0):
@@ -139,6 +164,7 @@ if __name__ == '__main__':
     parser.add_argument("--test", action='store_true')
     args = parser.parse_args()
     os.makedirs(args.ckpt_dir, exist_ok=True)
+    update_global(args)
 
     train_dataloader = get_chunked_h5dataloader(config_path=args.data_config, split='train')
     val_dataloader = get_chunked_h5dataloader(config_path=args.data_config, split='validation')
