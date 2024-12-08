@@ -65,7 +65,28 @@ def evaluate(model, eval_loader, split:str, writer:SummaryWriter=None, step:int=
     if writer:
         writer.add_scalar(f'Loss/{split}', eval_loss, step)
         writer.add_scalar(f'Active/{split}', active_percent, step)
-    return eval_loss
+    return eval_loss, index_count
+
+def save_histogram(args, index_count):
+    import csv
+    import matplotlib.pyplot as plt
+    with open(os.path.join(args.ckpt_dir, 'index_frequencies.csv'), mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(['Index', 'Frequency'])  # 写入表头
+        for idx, count in index_count.items():
+            writer.writerow([idx, count])  # 写入每个索引的频次
+
+    logging.info("Index frequencies saved to 'index_frequencies.csv'")
+    
+    frequencies = list(index_count.values())
+
+    plt.bar(range(num_codes), frequencies, edgecolor='black', alpha=0.7)
+    plt.title("Frequency of Codebook Indices (Entire Dataset)")
+    plt.xlabel("Codebook Index")
+    plt.ylabel("Frequency")
+    plt.xticks(range(0, num_codes, 50))
+    plt.savefig(os.path.join(args.ckpt_dir, 'index_frequencies.png'))
+
 
 def train(model, args, train_loader, val_loader=None, train_epochs=1, alpha=10, validate_every=1000, writer=None, resume_from_step=0):
     model.to(device)
@@ -103,7 +124,7 @@ def train(model, args, train_loader, val_loader=None, train_epochs=1, alpha=10, 
             step += 1
 
             if val_loader and step % validate_every == 0:
-                val_loss = evaluate(model, val_loader, "Validation", writer, step)
+                val_loss, _ = evaluate(model, val_loader, "Validation", writer, step)
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     save_checkpoint(model, opt, step, os.path.join(args.ckpt_dir, 'best_checkpoint.pt'))
@@ -141,6 +162,7 @@ if __name__ == '__main__':
     # Test using best checkpoint
     logging.info("Loading best checkpoint for testing")
     load_checkpoint(model, None, os.path.join(args.ckpt_dir, 'best_checkpoint.pt'))
-    evaluate(model, test_dataloader, "Test", writer)
+    _, index_count = evaluate(model, test_dataloader, "Test", writer)
+    save_histogram(args, index_count)
 
     writer.close()
