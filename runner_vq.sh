@@ -9,8 +9,6 @@
 #SBATCH --gres=gpu:1        # 若使用2块卡，则gres=gpu:2
 #SBATCH --output=./runs/vq_vanilla/%j.out
 #SBATCH --error=./runs/vq_vanilla/%j.err
-#SBATCH --mail-type=all     # 设置邮件通知类型，可选all, end, fail, begin
-#SBATCH --mail-user=1729372667@qq.com # 设置通知邮箱
 
 python train_vq.py --ckpt_dir ./runs/vq_vanilla
 python train_vq.py --ckpt_dir ./runs/vq_vanilla --test
