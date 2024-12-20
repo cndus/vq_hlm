@@ -1,4 +1,5 @@
 from vector_quantize_pytorch import VectorQuantize, ResidualVQ, GroupedResidualVQ, RandomProjectionQuantizer, SimVQ, ResidualSimVQ, LFQ
+from custom_models.truthx import TruthXVAE
 from utils import load_config
 
 
@@ -23,6 +24,8 @@ def get_model(vae_config_path):
             num_quantizers = vae_config['num_quantizers'],      # specify number of quantizers
             codebook_size = vae_config['codebook_size'],    # codebook size
         )
+    elif vae_config['vq_type'] == 'TruthX_ResidualVQ':
+        vqvae = TruthXVAE(vae_config)
     elif vae_config['vq_type'] == 'GroupedResidualVQ':  
         vqvae = GroupedResidualVQ(
             dim = vae_config['embedding_dim'],
