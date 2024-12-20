@@ -1,6 +1,22 @@
 from vector_quantize_pytorch import VectorQuantize, ResidualVQ, GroupedResidualVQ, RandomProjectionQuantizer, SimVQ, ResidualSimVQ, LFQ
 from utils import load_config
+import torch.nn as nn
+from vector_quantize_pytorch import Sequential
 
+def AEVQ(VQmodel):
+    return Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, stride=1, padding=1),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.GELU(),
+            nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            VQmodel,
+            nn.Upsample(scale_factor=2, mode="nearest"),
+            nn.Conv2d(32, 16, kernel_size=3, stride=1, padding=1),
+            nn.GELU(),
+            nn.Upsample(scale_factor=2, mode="nearest"),
+            nn.Conv2d(16, 1, kernel_size=3, stride=1, padding=1),
+        )
 
 def get_model(vae_config_path):
     vae_config = load_config(vae_config_path)
@@ -38,18 +54,18 @@ def get_model(vae_config_path):
             codebook_size = vae_config['codebook_size']     # codebook size
         )
     elif vae_config['vq_type'] == 'SimVQ': 
-        vqvae = SimVQ(
+        vqvae = AEVQ(SimVQ(
             dim = vae_config['embedding_dim'],
             codebook_size = vae_config['codebook_size'],
             rotation_trick = True  # use rotation trick from Fifty et al.
-        )
+        ))
     elif vae_config['vq_type'] == 'ResidualSimVQ': 
-        vqvae = ResidualSimVQ(
+        vqvae = AEVQ(ResidualSimVQ(
             dim = vae_config['embedding_dim'],
             num_quantizers = vae_config['num_quantizers'],
             codebook_size = vae_config['codebook_size'],
             rotation_trick = True  # use rotation trick from Fifty et al.
-        )
+        ))
     elif vae_config['vq_type'] == 'LFQ': 
         vqvae = LFQ(
             codebook_size = vae_config['codebook_size'],      # codebook size, must be a power of 2

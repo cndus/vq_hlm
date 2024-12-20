@@ -62,7 +62,7 @@ def evaluate(model, eval_loader, split: str, writer: SummaryWriter = None, step:
 
     with torch.no_grad():
         for batch in tqdm(eval_loader, desc=f"Running on {split}"):
-            x = batch[KEY_LM_HIDDEN_STATES].to(device)
+            x = batch[KEY_LM_HIDDEN_STATES].to(device).unsqueeze(1)
             rec_loss, cmt_loss, total_loss, indices = compute_loss(model, x)
             eval_rec_loss += rec_loss.item()
             for codebook_idx in range(num_quantizers):
@@ -128,7 +128,7 @@ def train(model, args, train_loader, val_loader=None, train_epochs=1, alpha=10, 
         pbar = tqdm(train_loader, desc="Training")
         for batch in pbar:
             opt.zero_grad()
-            x = batch[KEY_LM_HIDDEN_STATES].to(device)
+            x = batch[KEY_LM_HIDDEN_STATES].to(device).unsqueeze(1)
             rec_loss, cmt_loss, total_loss, indices = compute_loss(model, x, alpha)
             total_loss.backward()
 

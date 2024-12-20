@@ -1,14 +1,13 @@
 #!/bin/bash
 
-#SBATCH --account=yfliu3
-#SBATCH --job-name=vq_vanilla
+#SBATCH --account=xhyin
+#SBATCH --job-name=Simvq
 #SBATCH --partition=RTX3090,RTX4090,A100 # 用sinfo命令可以看到所有队列
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1 # 若多卡或多进程，请调整此参数
+#SBATCH --qos=high
 #SBATCH --cpus-per-task=16  # 每个进程的CPU数量
-#SBATCH --gres=gpu:1        # 若使用2块卡，则gres=gpu:2
-#SBATCH --output=./runs/vq_vanilla/%j.out
-#SBATCH --error=./runs/vq_vanilla/%j.err
+#SBATCH --gres=gpu:2        # 若使用2块卡，则gres=gpu:2
 
-python train_vq.py --ckpt_dir ./runs/vq_vanilla
-python train_vq.py --ckpt_dir ./runs/vq_vanilla --test
+
+python train_vq.py --ckpt_dir ./runs/Simvq --model_config conf/models/Simvq.yaml
+python train_vq.py --ckpt_dir ./runs/Simvq --model_config conf/models/Simvq.yaml --test
