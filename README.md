@@ -36,3 +36,5 @@
 The specific structure is presented in Appendix A. Following Li et al. (2023b) and Chen et al. (2024), we employ a 2-fold validation on TruthfulQA to ensure no overlap between training and testing.
 For training, TruthX is optimized using Adam optimizer with a learning rate of 1e-4.
 Based on the performance on validation set, we set the number of editing layers k = 10 and the editing strength α = 1.0 and α = 4.5 for the open-ended generation and multiple-choice task.
+
+- [24.12.20] 为适应不同模型训练量大小，将1 epoch设置取消，换为patience动态决定训练何时停止。
