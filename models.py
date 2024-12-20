@@ -1,6 +1,6 @@
 from vector_quantize_pytorch import VectorQuantize, ResidualVQ, GroupedResidualVQ, RandomProjectionQuantizer, SimVQ, ResidualSimVQ, LFQ
 from custom_models.truthx import TruthXVAE
-from utils import load_config
+from utils import load_config, count_parameters
 
 
 def get_model(vae_config_path):
@@ -61,4 +61,7 @@ def get_model(vae_config_path):
             diversity_gamma = 1.        # within entropy loss, how much weight to give to diversity of codes, taken from https://arxiv.org/abs/1911.05894
         )
 
+    n_trainable, n_fixed = count_parameters(vqvae)
+    print(f'Model parameter stats for {vae_config["vq_type"]}')
+    print(f'{n_trainable / 1e6:.2f}M')
     return vqvae
