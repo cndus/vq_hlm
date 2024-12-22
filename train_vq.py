@@ -2,7 +2,10 @@ import argparse
 from tqdm import tqdm
 import torch
 from torch.utils.tensorboard import SummaryWriter
-from constants import KEY_LM_HIDDEN_STATES
+from constants import KEY_LM_HIDDEN_STATES, \
+    KEY_EVAL_REC_LOSS, KEY_EVAL_INDEX_COUNTS, KEY_EVAL_UTIL_LIST
+import csv
+import matplotlib.pyplot as plt
 from dataloading import get_chunked_h5dataloader
 import logging
 import os
@@ -84,16 +87,26 @@ def evaluate(model, eval_loader, split: str, writer: SummaryWriter = None, step:
         writer.add_scalar(f'Loss/{split}', eval_rec_loss, step)
         for codebook_idx in range(num_quantizers):
             writer.add_scalar(f'Active_Codebook_{codebook_idx+1}/{split}', individual_utilizations[codebook_idx], step)
-    return eval_rec_loss, index_counts
+    return {
+        KEY_EVAL_REC_LOSS: eval_rec_loss,
+        KEY_EVAL_INDEX_COUNTS: index_counts,
+        KEY_EVAL_UTIL_LIST: individual_utilizations,
+    }
 
-def save_histogram(args, index_counts):
+def save_histogram(args, eval_ret):
+    index_counts = eval_ret[KEY_EVAL_INDEX_COUNTS]
+    utilizations = eval_ret[KEY_EVAL_UTIL_LIST]
+    plt.bar(range(len(utilizations)), utilizations, edgecolor='black', alpha=0.7)
+    plt.title("Utilization rate of All Codebooks (Entire Dataset)")
+    plt.xlabel("Codebook Layer")
+    plt.savefig(os.path.join(args.ckpt_dir, f'codebook_utilization.png'))
     global num_quantizers
-    import csv
-    import matplotlib.pyplot as plt
+    codebooks_info_dir = os.path.join(args.ckpt_dir, 'codebooks')
+    os.makedirs(codebooks_info_dir, exist_ok=True)
     for codebook_idx, index_count in enumerate(index_counts):
         filename = f'index_frequencies_{codebook_idx}'
         index_count = index_counts[codebook_idx].tolist()
-        with open(os.path.join(args.ckpt_dir, f'{filename}.csv'), mode='w', newline='') as file:
+        with open(os.path.join(codebooks_info_dir, f'{filename}.csv'), mode='w', newline='') as file:
             writer = csv.writer(file)
             writer.writerow(['Index', 'Frequency'])  # 写入表头
             for idx, count in enumerate(index_count):
@@ -106,7 +119,7 @@ def save_histogram(args, index_counts):
         plt.xlabel("Codebook Index")
         plt.ylabel("Frequency")
         plt.xticks(range(0, num_codes, 50))
-        plt.savefig(os.path.join(args.ckpt_dir, f'{filename}.png'))
+        plt.savefig(os.path.join(codebooks_info_dir, f'{filename}.png'))
 
 
 def train(model, args, train_loader, val_loader=None, max_train_epochs=1, alpha=10, validate_every=1000, writer=None):
@@ -150,7 +163,7 @@ def train(model, args, train_loader, val_loader=None, max_train_epochs=1, alpha=
             step += 1
 
             if val_loader and step % validate_every == 0:
-                val_loss, _ = evaluate(model, val_loader, "Validation", writer, step)
+                val_loss = evaluate(model, val_loader, "Validation", writer, step)[KEY_EVAL_REC_LOSS]
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     best_epoch = epoch
@@ -202,7 +215,7 @@ if __name__ == '__main__':
     # Test using best checkpoint
     logging.info("Loading best checkpoint for testing")
     load_checkpoint(model, None, os.path.join(args.ckpt_dir, 'best_checkpoint.pt'))
-    _, index_count = evaluate(model, test_dataloader, "Test", writer)
-    save_histogram(args, index_count)
+    eval_ret = evaluate(model, test_dataloader, "Test", writer)
+    save_histogram(args, eval_ret)
 
     writer.close()

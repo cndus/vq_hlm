@@ -22,6 +22,7 @@
     - 新增训练自动续点续传功能
     - 新增patience参数用于切换到early stopping模式，需要指定patience>=1
     - 恢复默认的1 epoch设置
+    - test set evaluation会保存`codebook_utilization.png`，更加方便报告可视化。
 
 - [24.12.20]
     - 新增[TruthX](https://github.com/ictnlp/TruthX/blob/a41093a6ae3bcbcb523759da782de0f329d03d91/truthx.py#L261)自定义模型，参数量7.36M，比原先toy setting的0.05M大不少。
