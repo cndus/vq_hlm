@@ -16,7 +16,6 @@ logging.basicConfig(
 )
 
 lr = 3e-4
-max_train_epochs = 10001  # Infinite
 num_codes = 1024
 num_quantizers = 1
 is_multi_codebook = False
@@ -110,14 +109,14 @@ def save_histogram(args, index_counts):
         plt.savefig(os.path.join(args.ckpt_dir, f'{filename}.png'))
 
 
-def train(model, args, train_loader, val_loader=None, alpha=10, validate_every=1000, writer=None):
+def train(model, args, train_loader, val_loader=None, max_train_epochs=1, alpha=10, validate_every=1000, writer=None):
     model.to(device)
     model.train()
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
     best_val_loss = float('inf')
     best_epoch = 0
     step = 0
-    start_epoch = 0
+    epoch = start_epoch = 0
     potential_resume_path = os.path.join(args.ckpt_dir, 'latest_checkpoint.pt')
     no_improvement_counter = 0
     should_halt = False
@@ -174,11 +173,21 @@ if __name__ == '__main__':
     parser.add_argument("--model_config", default='conf/models/vectorquantize.yaml')
     parser.add_argument("--ckpt_dir", default='./checkpoints')
     parser.add_argument("--test", action='store_true')
-    parser.add_argument("--patience", type=int, default=1)
+    parser.add_argument("--patience", type=int, default=0,
+                        help='setting patience>0 will enable infinite training epochs until early stopping.')
     args = parser.parse_args()
+    print(f"checkpoint dir: {args.ckpt_dir}")
     os.makedirs(args.ckpt_dir, exist_ok=True)
     update_global(args)
 
+    if args.patience > 0:
+        # series full run mode
+        max_train_epochs = 10001 # infinite
+        print(f'Full mode enabled with early stopping patience {args.patience}.')
+    else:
+        # toy setting for exploration
+        max_train_epochs = 1
+        print(f"Training {max_train_epochs} epochs for toy setting.")
     train_dataloader = get_chunked_h5dataloader(config_path=args.data_config, split='train')
     val_dataloader = get_chunked_h5dataloader(config_path=args.data_config, split='validation')
     test_dataloader = get_chunked_h5dataloader(config_path=args.data_config, split='test')
@@ -188,7 +197,7 @@ if __name__ == '__main__':
 
     writer = SummaryWriter(log_dir=os.path.join(args.ckpt_dir, 'logs'))
     if not args.test:
-        train(model, args, train_dataloader, val_dataloader, writer=writer)
+        train(model, args, train_dataloader, val_dataloader, max_train_epochs=max_train_epochs, writer=writer)
 
     # Test using best checkpoint
     logging.info("Loading best checkpoint for testing")
