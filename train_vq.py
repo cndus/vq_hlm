@@ -110,22 +110,25 @@ def save_histogram(args, index_counts):
         plt.savefig(os.path.join(args.ckpt_dir, f'{filename}.png'))
 
 
-def train(model, args, train_loader, val_loader=None, alpha=10, validate_every=1000, writer=None, resume_from_step=0):
+def train(model, args, train_loader, val_loader=None, alpha=10, validate_every=1000, writer=None):
     model.to(device)
     model.train()
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
     best_val_loss = float('inf')
-    step = resume_from_step
+    best_epoch = 0
+    step = 0
+    start_epoch = 0
+    potential_resume_path = os.path.join(args.ckpt_dir, 'latest_checkpoint.pt')
     no_improvement_counter = 0
     should_halt = False
 
     # Load checkpoint if resuming
-    if resume_from_step > 0:
-        ckpt_path = os.path.join(args.ckpt_dir, 'latest_checkpoint.pt')
-        step = load_checkpoint(model, opt, ckpt_path)
-        logging.info(f"Resumed from step {resume_from_step}")
+    if os.path.isfile(potential_resume_path):
+        step = load_checkpoint(model, opt, potential_resume_path)
+        start_epoch = step // len(train_loader)
+        logging.info(f"Resumed from step {step}")
     
-    for epoch in range(max_train_epochs):
+    for epoch in range(start_epoch, max_train_epochs):
         logging.info(f"Starting epoch {epoch}")
         pbar = tqdm(train_loader, desc="Training")
         for batch in pbar:
@@ -151,6 +154,8 @@ def train(model, args, train_loader, val_loader=None, alpha=10, validate_every=1
                 val_loss, _ = evaluate(model, val_loader, "Validation", writer, step)
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
+                    best_epoch = epoch
+                    no_improvement_counter = 0
                     save_checkpoint(model, opt, step, os.path.join(args.ckpt_dir, 'best_checkpoint.pt'))
                 else:
                     no_improvement_counter += 1
@@ -160,6 +165,8 @@ def train(model, args, train_loader, val_loader=None, alpha=10, validate_every=1
         save_checkpoint(model, opt, step, os.path.join(args.ckpt_dir, 'latest_checkpoint.pt'))
         if should_halt:
             break
+    print(f'Stopped on {epoch=}')
+    print(f'{best_epoch=}')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -167,7 +174,7 @@ if __name__ == '__main__':
     parser.add_argument("--model_config", default='conf/models/vectorquantize.yaml')
     parser.add_argument("--ckpt_dir", default='./checkpoints')
     parser.add_argument("--test", action='store_true')
-    parser.add_argument("--patience", type=int, default=3)
+    parser.add_argument("--patience", type=int, default=1)
     args = parser.parse_args()
     os.makedirs(args.ckpt_dir, exist_ok=True)
     update_global(args)
