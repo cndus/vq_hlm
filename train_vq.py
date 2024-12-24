@@ -15,7 +15,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
 )
 
-lr = 3e-4
+lr = 1e-3
 train_epochs = 1
 num_codes = 1024
 num_quantizers = 1
@@ -24,11 +24,10 @@ seed = 1234
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def update_global(args):
+def update_global(vae_config):
     global num_codes, num_quantizers, is_multi_codebook
-    data_config = load_config(args.model_config)
-    num_codes = data_config.get('codebook_size', 1024)
-    num_quantizers = data_config.get('num_quantizers', 1)
+    num_codes = vae_config.get('codebook_size')
+    num_quantizers = vae_config.get('num_quantizers')
     is_multi_codebook = num_quantizers > 1
 
 
@@ -153,6 +152,7 @@ def train(model, args, train_loader, val_loader=None, train_epochs=1, alpha=10, 
 
         save_checkpoint(model, opt, step, os.path.join(args.ckpt_dir, 'latest_checkpoint.pt'))
 
+import time
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_config", default='conf/data/example.yaml')
@@ -160,24 +160,30 @@ if __name__ == '__main__':
     parser.add_argument("--ckpt_dir", default='./checkpoints')
     parser.add_argument("--test", action='store_true')
     args = parser.parse_args()
+    args.ckpt_dir = os.path.join(args.ckpt_dir, time.strftime("%m-%d_%H-%M", time.localtime()))
     os.makedirs(args.ckpt_dir, exist_ok=True)
-    update_global(args)
-
+    
     train_dataloader = get_chunked_h5dataloader(config_path=args.data_config, split='train')
     val_dataloader = get_chunked_h5dataloader(config_path=args.data_config, split='validation')
     test_dataloader = get_chunked_h5dataloader(config_path=args.data_config, split='test')
 
     torch.manual_seed(seed)
-    model = get_model(args.model_config)
+    vae_config = load_config(args.model_config)
+    
+    for i in {64, 128}:
+        print(f"Training with {i} quantizers")
+        vae_config['num_quantizers'] = i
+        update_global(vae_config)
+        model = get_model(vae_config)
 
-    writer = SummaryWriter(log_dir=os.path.join(args.ckpt_dir, 'logs'))
-    if not args.test:
-        train(model, args, train_dataloader, val_dataloader, train_epochs=train_epochs, writer=writer)
+        writer = SummaryWriter(log_dir=os.path.join(args.ckpt_dir, 'logs'))
+        if not args.test:
+            train(model, args, train_dataloader, val_dataloader, train_epochs=train_epochs, writer=writer)
 
-    # Test using best checkpoint
-    logging.info("Loading best checkpoint for testing")
-    load_checkpoint(model, None, os.path.join(args.ckpt_dir, 'best_checkpoint.pt'))
-    _, index_count = evaluate(model, test_dataloader, "Test", writer)
-    save_histogram(args, index_count)
+        # Test using best checkpoint
+        logging.info("Loading best checkpoint for testing")
+        load_checkpoint(model, None, os.path.join(args.ckpt_dir, 'best_checkpoint.pt'))
+        _, index_count = evaluate(model, test_dataloader, "Test", writer)
+        save_histogram(args, index_count)
 
-    writer.close()
+        writer.close()

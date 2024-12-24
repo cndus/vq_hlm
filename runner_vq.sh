@@ -10,4 +10,3 @@
 
 
 python train_vq.py --ckpt_dir ./runs/Simvq --model_config conf/models/Simvq.yaml
-python train_vq.py --ckpt_dir ./runs/Simvq --model_config conf/models/Simvq.yaml --test

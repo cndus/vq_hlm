@@ -18,9 +18,7 @@ def AEVQ(VQmodel):
             nn.Conv2d(16, 1, kernel_size=3, stride=1, padding=1),
         )
 
-def get_model(vae_config_path):
-    vae_config = load_config(vae_config_path)
-
+def get_model(vae_config):
     if vae_config['vq_type'] == 'VectorQuantize': 
         vqvae = VectorQuantize(
             dim=vae_config['embedding_dim'],
@@ -64,7 +62,12 @@ def get_model(vae_config_path):
             dim = vae_config['embedding_dim'],
             num_quantizers = vae_config['num_quantizers'],
             codebook_size = vae_config['codebook_size'],
-            rotation_trick = True  # use rotation trick from Fifty et al.
+            rotation_trick = True,  # use rotation trick from Fifty et al.
+            codebook_transform = nn.Sequential(
+                nn.Linear(192, 768),
+                nn.ReLU(),
+                nn.Linear(768, 192),
+            )
         ))
     elif vae_config['vq_type'] == 'LFQ': 
         vqvae = LFQ(
