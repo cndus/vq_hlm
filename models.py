@@ -1,21 +1,18 @@
 from vector_quantize_pytorch import VectorQuantize, ResidualVQ, GroupedResidualVQ, RandomProjectionQuantizer, SimVQ, ResidualSimVQ, LFQ
-from utils import load_config
 import torch.nn as nn
 from vector_quantize_pytorch import Sequential
+from custom_models.truthx import TruthXVAE
+from utils import load_config, count_parameters
 
 def AEVQ(VQmodel):
     return Sequential(
-            nn.Conv2d(1, 16, kernel_size=3, stride=1, padding=1),
-            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Linear(768, 384),
             nn.GELU(),
-            nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1),
-            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Linear(384, 768),
             VQmodel,
-            nn.Upsample(scale_factor=2, mode="nearest"),
-            nn.Conv2d(32, 16, kernel_size=3, stride=1, padding=1),
+            nn.Linear(768, 384),
             nn.GELU(),
-            nn.Upsample(scale_factor=2, mode="nearest"),
-            nn.Conv2d(16, 1, kernel_size=3, stride=1, padding=1),
+            nn.Linear(384, 768),
         )
 
 def get_model(vae_config):
@@ -37,6 +34,8 @@ def get_model(vae_config):
             num_quantizers = vae_config['num_quantizers'],      # specify number of quantizers
             codebook_size = vae_config['codebook_size'],    # codebook size
         )
+    elif vae_config['vq_type'] == 'TruthX_ResidualVQ':
+        vqvae = TruthXVAE(vae_config)
     elif vae_config['vq_type'] == 'GroupedResidualVQ':  
         vqvae = GroupedResidualVQ(
             dim = vae_config['embedding_dim'],
@@ -63,11 +62,6 @@ def get_model(vae_config):
             num_quantizers = vae_config['num_quantizers'],
             codebook_size = vae_config['codebook_size'],
             rotation_trick = True,  # use rotation trick from Fifty et al.
-            codebook_transform = nn.Sequential(
-                nn.Linear(192, 768),
-                nn.ReLU(),
-                nn.Linear(768, 192),
-            )
         ))
     elif vae_config['vq_type'] == 'LFQ': 
         vqvae = LFQ(
@@ -77,4 +71,7 @@ def get_model(vae_config):
             diversity_gamma = 1.        # within entropy loss, how much weight to give to diversity of codes, taken from https://arxiv.org/abs/1911.05894
         )
 
+    n_trainable, n_fixed = count_parameters(vqvae)
+    print(f'Model parameter stats for {vae_config["vq_type"]}')
+    print(f'{n_trainable / 1e6:.2f}M')
     return vqvae

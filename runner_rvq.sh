@@ -2,7 +2,7 @@
 
 #SBATCH --account=xhyin
 #SBATCH --job-name=rSimvq
-#SBATCH --partition=RTX3090,RTX4090,A100 # 用sinfo命令可以看到所有队列
+#SBATCH --partition=ADA6000 # 用sinfo命令可以看到所有队列
 #SBATCH --nodes=1
 #SBATCH --qos=high
 #SBATCH --cpus-per-task=16  # 每个进程的CPU数量

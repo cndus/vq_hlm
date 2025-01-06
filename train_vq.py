@@ -2,7 +2,10 @@ import argparse
 from tqdm import tqdm
 import torch
 from torch.utils.tensorboard import SummaryWriter
-from constants import KEY_LM_HIDDEN_STATES
+from constants import KEY_LM_HIDDEN_STATES, \
+    KEY_EVAL_REC_LOSS, KEY_EVAL_INDEX_COUNTS, KEY_EVAL_UTIL_LIST
+import csv
+import matplotlib.pyplot as plt
 from dataloading import get_chunked_h5dataloader
 import logging
 import os
@@ -16,7 +19,6 @@ logging.basicConfig(
 )
 
 lr = 1e-3
-train_epochs = 1
 num_codes = 1024
 num_quantizers = 1
 is_multi_codebook = False
@@ -26,8 +28,8 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 def update_global(vae_config):
     global num_codes, num_quantizers, is_multi_codebook
-    num_codes = vae_config.get('codebook_size')
-    num_quantizers = vae_config.get('num_quantizers')
+    num_codes = vae_config['codebook_size']
+    num_quantizers = vae_config['num_quantizers']
     is_multi_codebook = num_quantizers > 1
 
 
@@ -84,16 +86,26 @@ def evaluate(model, eval_loader, split: str, writer: SummaryWriter = None, step:
         writer.add_scalar(f'Loss/{split}', eval_rec_loss, step)
         for codebook_idx in range(num_quantizers):
             writer.add_scalar(f'Active_Codebook_{codebook_idx+1}/{split}', individual_utilizations[codebook_idx], step)
-    return eval_rec_loss, index_counts
+    return {
+        KEY_EVAL_REC_LOSS: eval_rec_loss,
+        KEY_EVAL_INDEX_COUNTS: index_counts,
+        KEY_EVAL_UTIL_LIST: individual_utilizations,
+    }
 
-def save_histogram(args, index_counts):
+def save_histogram(args, eval_ret):
+    index_counts = eval_ret[KEY_EVAL_INDEX_COUNTS]
+    utilizations = eval_ret[KEY_EVAL_UTIL_LIST]
+    plt.bar(range(len(utilizations)), utilizations, edgecolor='black', alpha=0.7)
+    plt.title("Utilization rate of All Codebooks (Entire Dataset)")
+    plt.xlabel("Codebook Layer")
+    plt.savefig(os.path.join(args.ckpt_dir, f'codebook_utilization.png'))
     global num_quantizers
-    import csv
-    import matplotlib.pyplot as plt
+    codebooks_info_dir = os.path.join(args.ckpt_dir, 'codebooks')
+    os.makedirs(codebooks_info_dir, exist_ok=True)
     for codebook_idx, index_count in enumerate(index_counts):
         filename = f'index_frequencies_{codebook_idx}'
         index_count = index_counts[codebook_idx].tolist()
-        with open(os.path.join(args.ckpt_dir, f'{filename}.csv'), mode='w', newline='') as file:
+        with open(os.path.join(codebooks_info_dir, f'{filename}.csv'), mode='w', newline='') as file:
             writer = csv.writer(file)
             writer.writerow(['Index', 'Frequency'])  # 写入表头
             for idx, count in enumerate(index_count):
@@ -106,23 +118,28 @@ def save_histogram(args, index_counts):
         plt.xlabel("Codebook Index")
         plt.ylabel("Frequency")
         plt.xticks(range(0, num_codes, 50))
-        plt.savefig(os.path.join(args.ckpt_dir, f'{filename}.png'))
+        plt.savefig(os.path.join(codebooks_info_dir, f'{filename}.png'))
 
 
-def train(model, args, train_loader, val_loader=None, train_epochs=1, alpha=10, validate_every=1000, writer=None, resume_from_step=0):
+def train(model, args, train_loader, val_loader=None, max_train_epochs=1, alpha=10, validate_every=1000, writer=None):
     model.to(device)
     model.train()
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
     best_val_loss = float('inf')
-    step = resume_from_step
+    best_epoch = 0
+    step = 0
+    epoch = start_epoch = 0
+    potential_resume_path = os.path.join(args.ckpt_dir, 'latest_checkpoint.pt')
+    no_improvement_counter = 0
+    should_halt = False
 
     # Load checkpoint if resuming
-    if resume_from_step > 0:
-        ckpt_path = os.path.join(args.ckpt_dir, 'latest_checkpoint.pt')
-        step = load_checkpoint(model, opt, ckpt_path)
-        logging.info(f"Resumed from step {resume_from_step}")
+    if os.path.isfile(potential_resume_path):
+        step = load_checkpoint(model, opt, potential_resume_path)
+        start_epoch = step // len(train_loader)
+        logging.info(f"Resumed from step {step}")
     
-    for epoch in range(train_epochs):
+    for epoch in range(start_epoch, max_train_epochs):
         logging.info(f"Starting epoch {epoch}")
         pbar = tqdm(train_loader, desc="Training")
         for batch in pbar:
@@ -145,12 +162,22 @@ def train(model, args, train_loader, val_loader=None, train_epochs=1, alpha=10, 
             step += 1
 
             if val_loader and step % validate_every == 0:
-                val_loss, _ = evaluate(model, val_loader, "Validation", writer, step)
+                val_loss = evaluate(model, val_loader, "Validation", writer, step)[KEY_EVAL_REC_LOSS]
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
+                    best_epoch = epoch
+                    no_improvement_counter = 0
                     save_checkpoint(model, opt, step, os.path.join(args.ckpt_dir, 'best_checkpoint.pt'))
-
+                else:
+                    no_improvement_counter += 1
+                    if no_improvement_counter >= args.patience:
+                        should_halt = True
+                        break
         save_checkpoint(model, opt, step, os.path.join(args.ckpt_dir, 'latest_checkpoint.pt'))
+        if should_halt:
+            break
+    print(f'Stopped on {epoch=}')
+    print(f'{best_epoch=}')
 
 import time
 if __name__ == '__main__':
@@ -159,31 +186,40 @@ if __name__ == '__main__':
     parser.add_argument("--model_config", default='conf/models/vectorquantize.yaml')
     parser.add_argument("--ckpt_dir", default='./checkpoints')
     parser.add_argument("--test", action='store_true')
+    parser.add_argument("--patience", type=int, default=1,
+                        help='setting patience>0 will enable infinite training epochs until early stopping.')
     args = parser.parse_args()
-    args.ckpt_dir = os.path.join(args.ckpt_dir, time.strftime("%m-%d_%H-%M", time.localtime()))
-    os.makedirs(args.ckpt_dir, exist_ok=True)
-    
-    train_dataloader = get_chunked_h5dataloader(config_path=args.data_config, split='train')
-    val_dataloader = get_chunked_h5dataloader(config_path=args.data_config, split='validation')
-    test_dataloader = get_chunked_h5dataloader(config_path=args.data_config, split='test')
 
     torch.manual_seed(seed)
     vae_config = load_config(args.model_config)
+    args.ckpt_dir = os.path.join(args.ckpt_dir, time.strftime("%m-%d_%H-%M", time.localtime()))
+    os.makedirs(args.ckpt_dir, exist_ok=True)
+    print(f"checkpoint dir: {args.ckpt_dir}")
+    update_global(vae_config)
+
+    if args.patience > 0:
+        # series full run mode
+        max_train_epochs = 10001 # infinite
+        print(f'Full mode enabled with early stopping patience {args.patience}.')
+    else:
+        # toy setting for exploration
+        max_train_epochs = 1
+        print(f"Training {max_train_epochs} epochs for toy setting.")
+    train_dataloader = get_chunked_h5dataloader(config_path=args.data_config, split='train')
+    val_dataloader = get_chunked_h5dataloader(config_path=args.data_config, split='validation')
+    test_dataloader = get_chunked_h5dataloader(config_path=args.data_config, split='test')
     
-    for i in {64, 128}:
-        print(f"Training with {i} quantizers")
-        vae_config['num_quantizers'] = i
-        update_global(vae_config)
-        model = get_model(vae_config)
+    update_global(vae_config)
+    model = get_model(vae_config)
 
-        writer = SummaryWriter(log_dir=os.path.join(args.ckpt_dir, 'logs'))
-        if not args.test:
-            train(model, args, train_dataloader, val_dataloader, train_epochs=train_epochs, writer=writer)
+    writer = SummaryWriter(log_dir=os.path.join(args.ckpt_dir, 'logs'))
+    if not args.test:
+        train(model, args, train_dataloader, val_dataloader, max_train_epochs=max_train_epochs, writer=writer)
 
-        # Test using best checkpoint
-        logging.info("Loading best checkpoint for testing")
-        load_checkpoint(model, None, os.path.join(args.ckpt_dir, 'best_checkpoint.pt'))
-        _, index_count = evaluate(model, test_dataloader, "Test", writer)
-        save_histogram(args, index_count)
+    # Test using best checkpoint
+    logging.info("Loading best checkpoint for testing")
+    load_checkpoint(model, None, os.path.join(args.ckpt_dir, 'best_checkpoint.pt'))
+    eval_ret = evaluate(model, test_dataloader, "Test", writer)
+    save_histogram(args, eval_ret)
 
-        writer.close()
+    writer.close()
