@@ -4,16 +4,23 @@ from vector_quantize_pytorch import Sequential
 from custom_models.truthx import TruthXVAE
 from utils import load_config, count_parameters
 
-def AEVQ(VQmodel):
-    return Sequential(
-            nn.Linear(768, 384),
-            nn.GELU(),
-            nn.Linear(384, 768),
-            VQmodel,
-            nn.Linear(768, 384),
-            nn.GELU(),
-            nn.Linear(384, 768),
-        )
+import yaml
+import torch
+import torch.nn.functional as F
+
+FIRST_PROJECT_DIM = 2048
+SECOND_PROJECT_DIM = 1024
+
+# 读取 YAML 配置文件
+def load_config(config_path):
+    with open(config_path, 'r') as file:
+        config = yaml.safe_load(file)
+    return config
+
+def count_parameters(model):
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_params = sum(p.numel() for p in model.parameters())
+    return trainable_params, total_params
 
 def get_model(vae_config):
     if vae_config['vq_type'] == 'VectorQuantize': 
@@ -51,18 +58,18 @@ def get_model(vae_config):
             codebook_size = vae_config['codebook_size']     # codebook size
         )
     elif vae_config['vq_type'] == 'SimVQ': 
-        vqvae = AEVQ(SimVQ(
+        vqvae = SimVQ(
             dim = vae_config['embedding_dim'],
             codebook_size = vae_config['codebook_size'],
             rotation_trick = True  # use rotation trick from Fifty et al.
-        ))
+        )
     elif vae_config['vq_type'] == 'ResidualSimVQ': 
-        vqvae = AEVQ(ResidualSimVQ(
+        vqvae = ResidualSimVQ(
             dim = vae_config['embedding_dim'],
             num_quantizers = vae_config['num_quantizers'],
             codebook_size = vae_config['codebook_size'],
-            rotation_trick = True,  # use rotation trick from Fifty et al.
-        ))
+            rotation_trick = True  # use rotation trick from Fifty et al.
+        )
     elif vae_config['vq_type'] == 'LFQ': 
         vqvae = LFQ(
             codebook_size = vae_config['codebook_size'],      # codebook size, must be a power of 2

@@ -1,5 +1,7 @@
 import argparse
 from tqdm import tqdm
+import shutil
+import yaml
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from constants import KEY_LM_HIDDEN_STATES, \
@@ -24,6 +26,7 @@ num_quantizers = 1
 is_multi_codebook = False
 seed = 1234
 device = "cuda" if torch.cuda.is_available() else "cpu"
+criterion = torch.nn.MSELoss()
 
 
 def update_global(vae_config):
@@ -49,7 +52,7 @@ def load_checkpoint(model, optimizer, ckpt_path):
 
 def compute_loss(model, x, alpha=10):
     out, indices, cmt_loss = model(x)
-    rec_loss = (out - x).abs().mean()
+    rec_loss = criterion(out, x)
     cmt_loss = cmt_loss.mean()
     total_loss = rec_loss + alpha * cmt_loss
     return rec_loss, cmt_loss, total_loss, indices
@@ -95,6 +98,7 @@ def evaluate(model, eval_loader, split: str, writer: SummaryWriter = None, step:
 def save_histogram(args, eval_ret):
     index_counts = eval_ret[KEY_EVAL_INDEX_COUNTS]
     utilizations = eval_ret[KEY_EVAL_UTIL_LIST]
+    print("Average Utilization rate = ", sum(utilizations)/len(utilizations))
     plt.bar(range(len(utilizations)), utilizations, edgecolor='black', alpha=0.7)
     plt.title("Utilization rate of All Codebooks (Entire Dataset)")
     plt.xlabel("Codebook Layer")
@@ -134,7 +138,7 @@ def train(model, args, train_loader, val_loader=None, max_train_epochs=1, alpha=
     should_halt = False
 
     # Load checkpoint if resuming
-    if os.path.isfile(potential_resume_path):
+    if args.resume is not None:
         step = load_checkpoint(model, opt, potential_resume_path)
         start_epoch = step // len(train_loader)
         logging.info(f"Resumed from step {step}")
@@ -176,8 +180,8 @@ def train(model, args, train_loader, val_loader=None, max_train_epochs=1, alpha=
         save_checkpoint(model, opt, step, os.path.join(args.ckpt_dir, 'latest_checkpoint.pt'))
         if should_halt:
             break
-    print(f'Stopped on {epoch=}')
-    print(f'{best_epoch=}')
+    print(f'Stopped on {epoch}')
+    print(f'best_epoch = {best_epoch}')
 
 import time
 if __name__ == '__main__':
@@ -186,15 +190,30 @@ if __name__ == '__main__':
     parser.add_argument("--model_config", default='conf/models/vectorquantize.yaml')
     parser.add_argument("--ckpt_dir", default='./checkpoints')
     parser.add_argument("--test", action='store_true')
-    parser.add_argument("--patience", type=int, default=1,
+    parser.add_argument("--patience", type=int, default=2,
                         help='setting patience>0 will enable infinite training epochs until early stopping.')
+    parser.add_argument("--resume", default=None, help="Path to a checkpoint to resume training from")
     args = parser.parse_args()
 
     torch.manual_seed(seed)
     vae_config = load_config(args.model_config)
-    args.ckpt_dir = os.path.join(args.ckpt_dir, time.strftime("%m-%d_%H-%M", time.localtime()))
-    os.makedirs(args.ckpt_dir, exist_ok=True)
-    print(f"checkpoint dir: {args.ckpt_dir}")
+    if args.resume is not None:
+        resume_config = [file for file in os.listdir(args.resume) if file.endswith('.yaml')][0]
+        resume_config = os.path.join(args.resume, resume_config)
+        vae_config = load_config(resume_config)
+        args.ckpt_dir = os.path.join(os.getcwd(), args.resume)
+        print(f" resume checkpoint dir: {args.ckpt_dir}")
+    else:
+        args.ckpt_dir = os.path.join(os.getcwd(), args.ckpt_dir)
+        args.ckpt_dir = os.path.join(args.ckpt_dir, 'RSimvq' + str(vae_config['num_quantizers']) + '_' + str(vae_config['codebook_size']))
+        os.makedirs(args.ckpt_dir, exist_ok=True)
+        print(f" new checkpoint dir: {args.ckpt_dir}")
+        # copy config to ckpt dir
+        config_name = 'RSimvq' + str(vae_config['num_quantizers']) + '_' + str(vae_config['codebook_size']) +'.yaml'
+        vae_config['ckpt_dir'] = os.path.join(args.ckpt_dir, 'best_checkpoint.pt')
+        with open(os.path.join(args.ckpt_dir, config_name), 'w') as f:
+            yaml.dump(vae_config, f)
+        
     update_global(vae_config)
 
     if args.patience > 0:
@@ -214,6 +233,8 @@ if __name__ == '__main__':
 
     writer = SummaryWriter(log_dir=os.path.join(args.ckpt_dir, 'logs'))
     if not args.test:
+        if args.resume is not None:
+            load_checkpoint(model, None, os.path.join(args.ckpt_dir, 'latest_checkpoint.pt'))
         train(model, args, train_dataloader, val_dataloader, max_train_epochs=max_train_epochs, writer=writer)
 
     # Test using best checkpoint
